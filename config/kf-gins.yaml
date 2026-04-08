@@ -5,8 +5,8 @@
 
 # IMU和GNSS数据文件路径
 # imudata and gnssdata filepath
-imupath: ""
-gnsspath: ""
+imupath: r"D:\Work\AlgoTech\KFGINS-master\test-data\gnss.nmea"
+gnsspath: r"D:\Work\AlgoTech\KFGINS-master\test-data\imu.aimu"
 
 # 输出文件夹路径
 # output folder path
