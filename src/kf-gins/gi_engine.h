@@ -320,6 +320,14 @@ public:
     }
 
     /**
+     * @brief 应用陀螺零偏估计值
+     *        apply estimated gyro bias from tilt-RTK initialization
+     *
+     * @param [in] gyro_bias 估计的陀螺零偏 [rad/s]
+     * */
+    void applyGyroBias(const Eigen::Vector3d& gyro_bias);
+
+    /**
      * @brief 获取载体坐标系到导航坐标系的旋转矩阵
      *        get body-to-navigation rotation matrix
      * */

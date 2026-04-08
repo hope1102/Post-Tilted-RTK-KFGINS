@@ -437,6 +437,11 @@ void GIEngine::stateFeedback() {
     dx_.setZero();
 }
 
+void GIEngine::applyGyroBias(const Eigen::Vector3d& gyro_bias) {
+    // 将估计的陀螺零偏应用到IMU误差状态
+    imuerror_.gyrbias = gyro_bias;
+}
+
 NavState GIEngine::getNavState() {
 
     NavState state;

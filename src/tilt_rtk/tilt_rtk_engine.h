@@ -200,11 +200,29 @@ private:
         // 累积陀螺数据用于零偏估计
         Eigen::Vector3d dvel(imu.dvel);
         Eigen::Vector3d dtheta(imu.dtheta);
-        zupt_detector_.addImuData(imu.time, dvel, dtheta);
+        zupt_detector_.addImuData(imu.time, dvel, dtheta, imu.dt);
 
         // 检查是否完成零偏估计
         double elapsed = state_machine_.getCurrentPhaseElapsed(imu.time);
         if (elapsed >= tilt_options_.workflow.gyro_bias_est_time) {
+            // 计算陀螺零偏：零偏 = 累积角度增量 / 累积时间
+            double dt_sum = zupt_detector_.getDtSum();
+            int sample_count = zupt_detector_.getGyroSampleCount();
+            Eigen::Vector3d gyro_bias_acc = zupt_detector_.getGyroBiasAccumulator();
+
+            if (dt_sum > 0 && sample_count > 0) {
+                Eigen::Vector3d estimated_gyro_bias = gyro_bias_acc / dt_sum;
+                // 应用估计的陀螺零偏到滤波器状态
+                gi_engine_.applyGyroBias(estimated_gyro_bias);
+
+                if (tilt_options_.debug.output_state_transitions) {
+                    std::cout << "[Tilt-RTK] Gyro bias estimated: "
+                              << estimated_gyro_bias.transpose() * R2D * 3600
+                              << " [deg/h] (from " << sample_count << " samples, "
+                              << dt_sum << "s)" << std::endl;
+                }
+            }
+
             // 重置累积器
             zupt_detector_.resetBiasAccumulator();
 
@@ -241,6 +259,7 @@ private:
                     std::cout << "[Tilt-RTK] Heading alignment completed:" << std::endl;
                     std::cout << "\t - Heading correction: " << result.heading_correction * 180.0 / M_PI << " [deg]" << std::endl;
                     std::cout << "\t - GNSS trajectory length: " << result.gnss_traj_length << " [m]" << std::endl;
+                    std::cout << "\t - Trajectory correlation: " << result.correlation << std::endl;
                 }
             } else {
                 std::cout << "[Tilt-RTK] Heading alignment failed. Continuing without correction." << std::endl;
@@ -261,7 +280,7 @@ private:
      */
     void processMeasureMode(const IMU& imu) {
         // ZUPT检测 - IMU静止检测
-        ZUPTResult imu_result = zupt_detector_.addImuData(imu.time, imu.dvel, imu.dtheta);
+        ZUPTResult imu_result = zupt_detector_.addImuData(imu.time, imu.dvel, imu.dtheta, imu.dt);
 
         // 综合IMU和GNSS的检测结果
         ZUPTResult zupt_result = zupt_detector_.updateZUPT(imu_result, ZUPTResult(), imu.time);
@@ -310,12 +329,14 @@ private:
             gyro_rate.setZero();
         }
 
-        // 计算ZUPT观测
+        // 计算ZUPT观测（完整版，包含地球自转）
+        // 传递纬度用于计算地球自转角速度
         ZUPTUpdater::ZUPTObservation obs = zupt_updater_.computeObservation(
             pva.vel,
             gyro_rate,
             pva.att.cbn,
-            tilt_options_.leverarm.imu_to_tip
+            tilt_options_.leverarm.imu_to_tip,
+            pva.pos[0]  // 纬度 [rad]
         );
 
         // 执行Kalman滤波器更新

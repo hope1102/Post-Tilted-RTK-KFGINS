@@ -59,6 +59,7 @@ public:
         acc_sum_.setZero();
         gyro_sum_.setZero();
         gyro_sample_count_ = 0;
+        dt_sum_ = 0.0;
     }
 
     /**
@@ -67,16 +68,12 @@ public:
      * @param timestamp 当前时间戳 [秒]
      * @param dvel IMU速度增量 [m/s]
      * @param dtheta IMU角度增量 [rad]
+     * @param dt IMU采样间隔 [秒]（用于零偏估计）
      *
      * @return ZUPT检测结果
      */
-    ZUPTResult addImuData(double timestamp, const Eigen::Vector3d& dvel, const Eigen::Vector3d& dtheta) {
+    ZUPTResult addImuData(double timestamp, const Eigen::Vector3d& dvel, const Eigen::Vector3d& dtheta, double dt) {
         ZUPTResult result;
-
-        // 计算加速度（假设IMU采样间隔可从dvel/dtheta推算，这里使用dtheta的大小估计dt）
-        // 注意：dvel是速度增量，dtheta是角度增量
-        // 加速度近似 = dvel / dt，但这里我们直接用加速度方差判断
-        // 使用dtheta的大小作为"运动剧烈程度"的代理
 
         // 转换为double并添加到缓冲区
         Eigen::Vector3d acc = dvel;  // 使用dvel作为"加速度"的代理
@@ -97,6 +94,7 @@ public:
         // 累积用于零偏估计（仅在零偏估计阶段使用）
         if (gyro_sample_count_ >= 0) {
             gyro_sum_ += dtheta;
+            dt_sum_ += dt;
             gyro_sample_count_++;
         }
 
@@ -109,10 +107,11 @@ public:
      * @param timestamp 当前时间戳 [秒]
      * @param acc 原始加速度 [m/s²]
      * @param gyro 原始角速度 [rad/s]
+     * @param dt IMU采样间隔 [秒]（用于零偏估计）
      *
      * @return ZUPT检测结果
      */
-    ZUPTResult addImuRawData(double timestamp, const Eigen::Vector3d& acc, const Eigen::Vector3d& gyro) {
+    ZUPTResult addImuRawData(double timestamp, const Eigen::Vector3d& acc, const Eigen::Vector3d& gyro, double dt) {
         ZUPTResult result;
 
         // 添加到缓冲区
@@ -131,7 +130,8 @@ public:
         result.imu_static = checkImuStatic();
 
         // 累积用于零偏估计
-        gyro_sum_ += gyro;
+        gyro_sum_ += gyro * dt;
+        dt_sum_ += dt;
         gyro_sample_count_++;
 
         return result;
@@ -148,25 +148,27 @@ public:
     ZUPTResult addGnssData(double timestamp, const Eigen::Vector3d& pos) {
         ZUPTResult result;
 
-        // 计算GNSS速度（位置差分）
-        if (last_gnss_time_ > 0) {
-            double dt = timestamp - last_gnss_time_;
-            if (dt > 0) {
-                Eigen::Vector3d vel = (pos - gnss_pos_buffer_.back()) / dt;
-                gnss_vel_buffer_.push_back(vel);
-            }
-        }
-
-        // 添加到缓冲区
+        // 先添加到缓冲区（确保back()能取到上一帧位置）
         gnss_pos_buffer_.push_back(pos);
         gnss_time_buffer_.push_back(timestamp);
         last_gnss_time_ = timestamp;
 
-        // 保持窗口大小
+        // 保持窗口大小（添加后再裁剪，保证至少有一帧历史数据）
         if (gnss_pos_buffer_.size() > static_cast<size_t>(options_.gnss_window + 1)) {
             gnss_pos_buffer_.erase(gnss_pos_buffer_.begin());
             gnss_time_buffer_.erase(gnss_time_buffer_.begin());
         }
+
+        // 计算GNSS速度（位置差分）：使用前一个位置和当前位置
+        if (gnss_pos_buffer_.size() >= 2) {
+            double dt = gnss_time_buffer_.back() - gnss_time_buffer_.at(gnss_time_buffer_.size() - 2);
+            if (dt > 0) {
+                Eigen::Vector3d vel = (gnss_pos_buffer_.back() - gnss_pos_buffer_.at(gnss_pos_buffer_.size() - 2)) / dt;
+                gnss_vel_buffer_.push_back(vel);
+            }
+        }
+
+        // 保持GNSS速度缓冲区大小
         if (gnss_vel_buffer_.size() > static_cast<size_t>(options_.gnss_window)) {
             gnss_vel_buffer_.erase(gnss_vel_buffer_.begin());
         }
@@ -249,11 +251,19 @@ public:
     }
 
     /**
+     * @brief 获取累积的时间间隔（用于零偏估计）
+     */
+    double getDtSum() const {
+        return dt_sum_;
+    }
+
+    /**
      * @brief 重置零偏估计累积值（零偏估计阶段完成后调用）
      */
     void resetBiasAccumulator() {
         gyro_sum_.setZero();
         gyro_sample_count_ = 0;
+        dt_sum_ = 0.0;
     }
 
 private:
@@ -348,6 +358,7 @@ private:
     Eigen::Vector3d acc_sum_;
     Eigen::Vector3d gyro_sum_;
     int gyro_sample_count_;
+    double dt_sum_;  // 累积的时间间隔（用于零偏估计）
 };
 
 #endif // TILT_RTK_ZUPT_DETECTOR_H
