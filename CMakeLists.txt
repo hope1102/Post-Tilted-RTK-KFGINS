@@ -19,6 +19,8 @@ file(GLOB_RECURSE SOURCE
         src/kf_gins.cpp
         src/fileio/fileloader.cc
         src/fileio/filesaver.cc
+        src/fileio/imunmealoader.cc
+        src/fileio/gnssnmealoader.cc
         src/kf-gins/gi_engine.cpp
         src/kf-gins/insmech.cpp)
 

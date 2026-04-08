@@ -5,19 +5,19 @@
 
 # IMU和GNSS数据文件路径
 # imudata and gnssdata filepath
-imupath: r"D:\Work\AlgoTech\KFGINS-master\test-data\gnss.nmea"
-gnsspath: r"D:\Work\AlgoTech\KFGINS-master\test-data\imu.aimu"
+imupath: r"D:\Work\AlgoTech\KFGINS-master\test-data\imu.aimu"
+gnsspath: r"D:\Work\AlgoTech\KFGINS-master\test-data\gnss.nmea"
 
 # 输出文件夹路径
 # output folder path
-outputpath: ""
+outputpath: r"D:\Work\AlgoTech\KFGINS-master\test-data\output"
 
 # IMU文件列数 (只会用前7列IMU数据)
 # IMU data columns, only use the first seven columns
 imudatalen: 7
 # IMU原始数据频率
 # IMU datarate [Hz]
-imudatarate: 200
+imudatarate: 100
 
 # 处理时间段，结束时间设置为-1时则处理至IMU文件结束
 # processing interval[s]

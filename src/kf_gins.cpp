@@ -28,8 +28,8 @@
 
 #include "common/angle.h"
 #include "fileio/filesaver.h"
-#include "fileio/gnssfileloader.h"
-#include "fileio/imufileloader.h"
+#include "fileio/gnssnmealoader.h"
+#include "fileio/imunmealoader.h"
 
 #include "kf-gins/gi_engine.h"
 
@@ -93,10 +93,10 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // 加载GNSS文件和IMU文件
-    // load GNSS file and IMU file
-    GnssFileLoader gnssfile(gnsspath);
-    ImuFileLoader imufile(imupath, imudatalen, imudatarate);
+    // 加载GNSS文件和IMU文件 (NMEA格式)
+    // load GNSS file and IMU file (NMEA format)
+    GnssNmeaLoader gnssfile(gnsspath);
+    ImuNmeaLoader imufile(imupath);
 
     // 构造GIEngine
     // Construct GIEngine
