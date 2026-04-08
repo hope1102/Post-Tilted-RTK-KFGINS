@@ -12,6 +12,10 @@
  * 其中 z = v_tip (杆尖速度，ZUPT时应为0)
  *
  * Copyright (C) 2024
+ *
+ * [修复记录]
+ * - 2024: 严格推导姿态偏导数H1，使用分步计算增强可读性
+ *          H1 = skew(v_l) 其中 v_l = C^b_n * (ω_ib × l^b)
  */
 
 #ifndef TILT_RTK_ZUPT_UPDATE_H
@@ -128,11 +132,37 @@ public:
         // 合并n系角速度: ω_total = ω_ie + ω_en
         Eigen::Matrix3d omega_total_skew = wie_n_skew + wen_n_skew;
 
-        // 计算杆尖速度
-        // v_tip = v_imu - C_bn * (l^b ×) * omega_ib - (omega_ie + omega_en) × * C_bn * l^b
-        Eigen::Vector3d v_tip = imu_vel
-                                - cbn * lever_skew * gyro_rate
-                                - omega_total_skew * cbn * lever_arm;
+        // ========== [修复] 严格推导H1矩阵 ==========
+        //
+        // 论文公式(14)的物理意义：
+        // v^n_T = v^n_I - v^n_omega - v^n_rot
+        //
+        // 其中：
+        // - v^n_omega = [(ω^n_ie×) + (ω^n_en×)] * C^b_n * l^b  （地球自转/导航系旋转导致的杆臂端点速度）
+        // - v^n_rot = C^b_n * (l^b×) * ω^b_ib  （杆臂旋转产生的线速度）
+        //
+        // 对于姿态误差φ对v^n_T的偏导数：
+        // 姿态误差φ会导致C^b_n变为(I - φ×)C^b_n
+        // 主要影响v^n_rot项中的C^b_n
+        //
+        // [修复] H1的严格推导：
+        // H1 = ∂v^n_T / ∂φ = ∂[C^b_n * (l^b×) * ω^b_ib] / ∂φ
+        //     = -(φ×) * C^b_n * (l^b×) * ω^b_ib
+        //     = skew(C^b_n * (l^b×) * ω^b_ib)    // 因为 -(φ×)v = v×φ = skew(v)φ
+        //
+        // 即：H1 = skew(v_l)  其中 v_l = C^b_n * (l^b×) * ω^b_ib
+        //
+        // 这与代码中的实现一致，但这里分步计算更清晰
+
+        // Step 1: 计算杆臂旋转产生的线速度 v_l = C^b_n * (l^b×) * ω^b_ib
+        Eigen::Vector3d v_lever_rot = cbn * lever_skew * gyro_rate;
+
+        // Step 2: 计算地球自转/导航旋转导致的线速度
+        // v_omega = (ω_ie + ω_en) × * C_bn * l^b
+        Eigen::Vector3d v_omega = omega_total_skew * cbn * lever_arm;
+
+        // Step 3: 计算总杆尖速度
+        Eigen::Vector3d v_tip = imu_vel - v_omega - v_lever_rot;
 
         // 观测残差：ZUPT时杆尖速度应为0
         // z = v_tip - 0 = v_tip
@@ -146,19 +176,23 @@ public:
         // ∂v_tip/∂δv = I_3
         obs.H.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();
 
-        // 2. 姿态误差对观测的偏导数 (H1, 论文公式20)
-        // ∂v_tip/∂φ = -(ω_total ×) * C_bn * l^b - C_bn * (l^b ×) * ω_ib
-        // 论文公式(20): H1 = -(ω_in ×)(C^b_n * l^b ×) - [C^b_n * (l^b × ω_ib)×]
-        Eigen::Matrix3d H1 = -omega_total_skew * cbn * lever_skew - cbn * lever_skew * Rotation::skewSymmetric(gyro_rate);
+        // 2. [修复] 姿态误差对观测的偏导数 (H1)
+        // H1 = skew(v_l) = skew(C^b_n * (l^b×) * ω^b_ib)
+        // 这是因为 ∂[(I-φ×)v_l]/∂φ = -v_l× = skew(v_l)
+        Eigen::Matrix3d H1 = Rotation::skewSymmetric(v_lever_rot);
         obs.H.block<3, 3>(0, 6) = H1;
 
-        // 3. 陀螺零偏对观测的偏导数 (H1，与姿态误差相同)
+        // 3. 陀螺零偏对观测的偏导数
         // ∂v_tip/∂ε_g = -C^b_n * (l^b×)
+        // 因为 v_l = C^b_n * (l^b×) * ω^b_ib
+        // 而 ω^b_ib = ω_true + ε_g
+        // 所以 ∂v_l/∂ε_g = C^b_n * (l^b×)
+        // 取负号因为残差是 v_tip
         obs.H.block<3, 3>(0, 9) = -cbn * lever_skew;
 
         // 4. 陀螺比例因子误差对观测的偏导数 (H2, 论文公式21)
         // ∂v_tip/∂δs_g = -C^b_n * (l^b×) * diag(ω_ib)
-        // H2 = -C^b_n * (l^b ×) * diag(ω_ib)
+        // H2 = -C^b_n * (l^b×) * diag(ω_ib)
         Eigen::Matrix3d omega_skew = Rotation::skewSymmetric(gyro_rate);
         obs.H.block<3, 3>(0, 15) = -cbn * lever_skew * omega_skew;
 

@@ -9,6 +9,10 @@
  * 3. 两者在水平面上的航向夹角即为初始航向误差
  *
  * Copyright (C) 2024
+ *
+ * [修复记录]
+ * - 2024: 重构compute()方法，严格按照Chen(2020)论文公式(5)实现
+ *          使用向量点积和叉积的atan2方法求航向夹角
  */
 
 #ifndef TILT_RTK_HEADING_ALIGNER_H
@@ -129,10 +133,13 @@ public:
      *
      * 计算INS轨迹和RTK轨迹的夹角，返回航向校正量
      *
-     * 论文方法：
-     * 1. 使用线性回归计算轨迹航向角
-     * 2. 计算INS和RTK轨迹的相关系数（论文要求 > 0.8）
-     * 3. 计算航向夹角
+     * 论文方法 (Chen 2020 公式5):
+     * 使用向量点积和叉积直接求夹角：
+     *   cos(Δψ) = (ΔP_ins · ΔP_rtk) / (||ΔP_ins|| * ||ΔP_rtk||)
+     *   sin(Δψ) = (ΔP_ins × ΔP_rtk) / (||ΔP_ins|| * ||ΔP_rtk||)
+     *   Δψ = atan2(sin(Δψ), cos(Δψ))
+     *
+     * 这里ΔP_ins和ΔP_rtk是水平面上的2D位移向量 [E, N]
      *
      * @return 航向对准结果
      */
@@ -151,25 +158,78 @@ public:
             return result;
         }
 
-        // 计算轨迹长度（以米为单位）
-        double ins_traj_length = computeTrajectoryLength(ins_traj_);
-        double rtk_traj_length = computeTrajectoryLength(rtk_traj_);
-        result.gnss_traj_length = rtk_traj_length;
+        // ========== [修复] 使用论文公式(5)计算航向夹角 ==========
+        // 论文方法：计算总位移向量（首尾点法），然后用向量叉积求夹角
+        //
+        // 原理：
+        // - INS轨迹在水平面上的投影向量: ΔP_ins = [E_ins, N_ins]
+        // - RTK轨迹在水平面上的投影向量: ΔP_rtk = [E_rtk, N_rtk]
+        // - 航向误差Δψ满足: ΔP_ins = R(Δψ) * ΔP_rtk
+        //   其中R(Δψ)是2D旋转矩阵
+        // - 通过叉积可以确定旋转方向，通过点积可以确定夹角大小
+        //
+        // 步骤：
+        // 1. 计算ΔP_ins和ΔP_rtk（使用首尾点法）
+        // 2. 计算叉积 z = E1*N2 - N1*E2 (2D叉积)
+        // 3. 计算点积 p = E1*E2 + N1*N2
+        // 4. Δψ = atan2(z, p)
 
-        // 检查轨迹长度是否足够（论文要求 > 0.1m）
-        if (rtk_traj_length < options_.gnss_traj_length_threshold) {
-            std::cout << "[HeadingAligner] RTK trajectory too short: "
-                      << rtk_traj_length << " < " << options_.gnss_traj_length_threshold << " m" << std::endl;
+        // Step 1: 计算INS轨迹的总体水平位移向量
+        // 使用首尾点法：取轨迹第一个点和最后一个点
+        double ins_dE = ins_traj_.back().pos_enu[0] - ins_traj_.front().pos_enu[0];  // E方向位移
+        double ins_dN = ins_traj_.back().pos_enu[1] - ins_traj_.front().pos_enu[1];  // N方向位移
+
+        // Step 2: 计算RTK轨迹的总体水平位移向量
+        double rtk_dE = rtk_traj_.back().pos_enu[0] - rtk_traj_.front().pos_enu[0];  // E方向位移
+        double rtk_dN = rtk_traj_.back().pos_enu[1] - rtk_traj_.front().pos_enu[1];  // N方向位移
+
+        // Step 3: 计算向量的模长（用于归一化）
+        double ins_norm = std::sqrt(ins_dE * ins_dE + ins_dN * ins_dN);
+        double rtk_norm = std::sqrt(rtk_dE * rtk_dE + rtk_dN * rtk_dN);
+
+        // 检查向量模长是否足够大（避免除零）
+        if (ins_norm < 1e-6 || rtk_norm < 1e-6) {
+            std::cout << "[HeadingAligner] Trajectory vector too short!" << std::endl;
             return result;
         }
 
+        // Step 4: 计算2D叉积 (z分量)
+        // 在2D情况下，叉积的结果是一个标量（表示垂直于平面的z分量）
+        // cross_2d = E1*N2 - N1*E2
+        double cross_2d = ins_dE * rtk_dN - ins_dN * rtk_dE;
+
+        // Step 5: 计算点积
+        // dot = E1*E2 + N1*N2
+        double dot = ins_dE * rtk_dE + ins_dN * rtk_dN;
+
+        // Step 6: 计算归一化后的cos和sin
+        double norm_product = ins_norm * rtk_norm;
+        double cos_delta = dot / norm_product;
+        double sin_delta = cross_2d / norm_product;
+
+        // Step 7: 使用atan2求航向夹角
+        // atan2(sin, cos) 可以处理所有象限，比单独的atan更稳健
+        double heading_diff = std::atan2(sin_delta, cos_delta);
+
+        // ========== 轨迹有效性检查 ==========
+
+        // 检查RTK轨迹长度
+        result.gnss_traj_length = computeTrajectoryLength(rtk_traj_);
+        if (result.gnss_traj_length < options_.gnss_traj_length_threshold) {
+            std::cout << "[HeadingAligner] RTK trajectory too short: "
+                      << result.gnss_traj_length << " < " << options_.gnss_traj_length_threshold << " m" << std::endl;
+            return result;
+        }
+
+        // 检查INS轨迹长度
+        double ins_traj_length = computeTrajectoryLength(ins_traj_);
         if (ins_traj_length < options_.gnss_traj_length_threshold) {
             std::cout << "[HeadingAligner] INS trajectory too short: "
                       << ins_traj_length << " m" << std::endl;
             return result;
         }
 
-        // ========== 计算轨迹相关系数（论文要求 > 0.8） ==========
+        // 计算轨迹相关系数（论文要求 > 0.8）
         result.correlation = computeTrajectoryCorrelation(ins_traj_, rtk_traj_);
         if (result.correlation < options_.min_traj_correlation) {
             std::cout << "[HeadingAligner] Trajectory correlation too low: "
@@ -177,20 +237,19 @@ public:
             return result;
         }
 
-        // ========== 使用线性回归计算轨迹航向角（论文方法） ==========
-        double ins_heading = computeHeadingByLinearRegression(ins_traj_);
-        double rtk_heading = computeHeadingByLinearRegression(rtk_traj_);
-
-        // 计算航向夹角（INS航向 - RTK航向）
-        double heading_diff = ins_heading - rtk_heading;
-
-        // 归一化到 [-PI, PI]
-        while (heading_diff > M_PI) heading_diff -= 2 * M_PI;
-        while (heading_diff < -M_PI) heading_diff += 2 * M_PI;
-
+        // ========== 返回结果 ==========
         result.heading_correction = heading_diff;
         result.success = true;
         last_result_ = result;
+
+        // 调试输出
+        std::cout << "[HeadingAligner] Heading alignment result:" << std::endl;
+        std::cout << "  - INS displacement: [" << ins_dE << ", " << ins_dN << "] m" << std::endl;
+        std::cout << "  - RTK displacement: [" << rtk_dE << ", " << rtk_dN << "] m" << std::endl;
+        std::cout << "  - Cos(Δψ): " << cos_delta << ", Sin(Δψ): " << sin_delta << std::endl;
+        std::cout << "  - Heading correction: " << heading_diff * R2D << " [deg]" << std::endl;
+        std::cout << "  - Correlation: " << result.correlation << std::endl;
+        std::cout << "  - RTK trajectory length: " << result.gnss_traj_length << " m" << std::endl;
 
         return result;
     }

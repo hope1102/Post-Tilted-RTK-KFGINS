@@ -4,6 +4,10 @@
  * 实现IMU+GNSS双重检测的零速更新触发机制
  *
  * Copyright (C) 2024
+ *
+ * [修复记录]
+ * - 2024: GNSS速度计算改为ENU坐标系（米/秒），使用blhToEnu转换
+ * - 2024: 加速度代理改为真实加速度 dvel/dt
  */
 
 #ifndef TILT_RTK_ZUPT_DETECTOR_H
@@ -14,6 +18,7 @@
 #include <iomanip>
 
 #include "tilt_rtk_types.h"
+#include "tilt_rtk_coord.h"
 #include "../common/angle.h"
 
 /**
@@ -71,12 +76,20 @@ public:
      * @param dt IMU采样间隔 [秒]（用于零偏估计）
      *
      * @return ZUPT检测结果
+     *
+     * [修复] 将dvel转换为真实加速度后再进行方差计算
      */
     ZUPTResult addImuData(double timestamp, const Eigen::Vector3d& dvel, const Eigen::Vector3d& dtheta, double dt) {
         ZUPTResult result;
 
-        // 转换为double并添加到缓冲区
-        Eigen::Vector3d acc = dvel;  // 使用dvel作为"加速度"的代理
+        // [修复] dvel是速度增量，需要除以dt得到真实平均加速度
+        // 静止时加速度应接近重力加速度的投影，任何偏离都表示运动
+        Eigen::Vector3d acc;
+        if (dt > 1e-6) {
+            acc = dvel / dt;  // [m/s²] 真实加速度 = 速度增量 / 时间
+        } else {
+            acc.setZero();
+        }
         acc_buffer_.push_back(acc);
         gyro_buffer_.push_back(dtheta);
 
@@ -144,6 +157,10 @@ public:
      * @param pos GNSS位置 [BLH: rad, rad, m]
      *
      * @return 更新后的静止检测结果
+     *
+     * [修复] GNSS速度计算改为ENU坐标系（米/秒）
+     * - 使用blhToEnu将BLH坐标差转换为ENU位移 [dE, dN, dU] (米)
+     * - 然后除以时间差dt得到真实的速度 [m/s]
      */
     ZUPTResult addGnssData(double timestamp, const Eigen::Vector3d& pos) {
         ZUPTResult result;
@@ -159,11 +176,26 @@ public:
             gnss_time_buffer_.erase(gnss_time_buffer_.begin());
         }
 
-        // 计算GNSS速度（位置差分）：使用前一个位置和当前位置
+        // [修复] 计算GNSS速度（ENU坐标系，米/秒）
+        // 使用前一个位置和当前位置，计算ENU位移后除以时间差
         if (gnss_pos_buffer_.size() >= 2) {
             double dt = gnss_time_buffer_.back() - gnss_time_buffer_.at(gnss_time_buffer_.size() - 2);
             if (dt > 0) {
-                Eigen::Vector3d vel = (gnss_pos_buffer_.back() - gnss_pos_buffer_.at(gnss_pos_buffer_.size() - 2)) / dt;
+                // 获取前后两个历元的BLH位置
+                const Eigen::Vector3d& pos_curr = gnss_pos_buffer_.back();
+                const Eigen::Vector3d& pos_prev = gnss_pos_buffer_.at(gnss_pos_buffer_.size() - 2);
+
+                // [修复] 使用blhToEnu将BLH差值转换为ENU位移（米）
+                // 这里以当前位置为参考点，计算前一位置相对于当前位置的ENU坐标
+                Eigen::Vector3d enu_displacement = CoordUtils::blhToEnu(pos_prev, pos_curr);
+
+                // [修复] 除以时间差得到真实速度 [m/s]
+                // 注意：ENU位移是以当前位置为参考，所以取负得到"从上一位置到当前位置"的速度
+                Eigen::Vector3d vel;
+                vel[0] = -enu_displacement[0] / dt;  // East velocity [m/s]
+                vel[1] = -enu_displacement[1] / dt;  // North velocity [m/s]
+                vel[2] = -enu_displacement[2] / dt;  // Up velocity [m/s]
+
                 gnss_vel_buffer_.push_back(vel);
             }
         }
