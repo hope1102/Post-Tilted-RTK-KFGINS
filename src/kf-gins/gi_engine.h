@@ -30,10 +30,12 @@
 
 #include "kf_gins_types.h"
 
+#include "common/rotation.h"
+
 class GIEngine {
 
 public:
-    explicit GIEngine(GINSOptions &options);
+    explicit GIEngine(const GINSOptions& options);
 
     ~GIEngine() = default;
 
@@ -259,6 +261,71 @@ private:
     // state ID and noise ID
     enum StateID { P_ID = 0, V_ID = 3, PHI_ID = 6, BG_ID = 9, BA_ID = 12, SG_ID = 15, SA_ID = 18 };
     enum NoiseID { VRW_ID = 0, ARW_ID = 3, BGSTD_ID = 6, BASTD_ID = 9, SGSTD_ID = 12, SASTD_ID = 15 };
+
+public:
+    /**
+     * @brief 获取PVA状态
+     *        get PVA state
+     * */
+    PVA getPVA() const {
+        return pvacur_;
+    }
+
+    /**
+     * @brief 获取IMU误差状态
+     *        get IMU error state
+     * */
+    ImuError getImuError() const {
+        return imuerror_;
+    }
+
+    /**
+     * @brief ZUPT速度观测更新
+     *        ZUPT velocity observation update
+     *
+     * @param [in] zupt_residual ZUPT残差（杆尖速度）[m/s]
+     * @param [in] H_zupt 观测矩阵 (3 x 21)
+     * @param [in] R_zupt 观测噪声矩阵 (3 x 3)
+     * */
+    void zuptUpdate(const Eigen::Vector3d& zupt_residual,
+                    const Eigen::MatrixXd& H_zupt_in,
+                    const Eigen::Matrix3d& R_zupt_in) {
+
+        Eigen::MatrixXd dz(3, 1);
+        dz.block(0, 0, 3, 1) = zupt_residual;
+
+        // 创建非const副本以匹配EKFUpdate的参数类型
+        Eigen::MatrixXd H_zupt = H_zupt_in;
+        Eigen::MatrixXd R_zupt = R_zupt_in;
+
+        EKFUpdate(dz, H_zupt, R_zupt);
+        stateFeedback();
+    }
+
+    /**
+     * @brief 应用航向校正
+     *        apply heading correction
+     *
+     * @param [in] heading_correction 航向校正量 [rad]
+     * */
+    void applyHeadingCorrection(double heading_correction) {
+
+        Eigen::Vector3d euler = pvacur_.att.euler;
+        euler[0] += heading_correction; // 航向角校正
+
+        // 更新姿态矩阵和四元数
+        pvacur_.att.euler = euler;
+        pvacur_.att.cbn   = Rotation::euler2matrix(euler);
+        pvacur_.att.qbn   = Rotation::euler2quaternion(euler);
+    }
+
+    /**
+     * @brief 获取载体坐标系到导航坐标系的旋转矩阵
+     *        get body-to-navigation rotation matrix
+     * */
+    Eigen::Matrix3d getCbn() const {
+        return pvacur_.att.cbn;
+    }
 };
 
 #endif // GI_ENGINE_H

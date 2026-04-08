@@ -1,0 +1,103 @@
+# Tilt-RTK 配置文件
+# 基于KFGINS的倾斜RTK扩展配置
+
+# 继承KFGINS基础配置
+imupath: "D:\\Work\\AlgoTech\\KFGINS-master\\test-data\\imu.aimu"
+gnsspath: "D:\\Work\\AlgoTech\\KFGINS-master\\test-data\\gnss.nmea"
+outputpath: "D:\\Work\\AlgoTech\\KFGINS-master\\test-data\\output-tilt"
+
+imudatalen: 7
+imudatarate: 100
+
+# 处理时间段 [秒]
+starttime: 0
+endtime: -1
+
+# 初始状态
+initpos: [ 30.5, 114, 20 ]
+initvel: [ 0.0, 0.0, 0.0 ]
+initatt: [ 0.0, 0.0, 0.0 ]
+
+# 初始IMU零偏和比例因子
+initgyrbias: [ 0, 0, 0 ]    # [deg/h]
+initaccbias: [ 0, 0, 0 ]    # [mGal]
+initgyrscale: [ 0, 0, 0 ]   # [ppm]
+initaccscale: [ 0, 0, 0 ]   # [ppm]
+
+# 初始状态标准差
+initposstd: [ 0.1, 0.1, 0.2 ]
+initvelstd: [ 0.05, 0.05, 0.05 ]
+initattstd: [ 0.5, 0.5, 1.0 ]
+
+# IMU噪声建模参数
+imunoise:
+  arw: [0.24, 0.24, 0.24]          # [deg/sqrt(hr)]
+  vrw: [0.24, 0.24, 0.24]          # [m/s/sqrt(hr)]
+  gbstd: [50.0, 50.0, 50.0]        # [deg/hr]
+  abstd: [250.0, 250.0, 250.0]     # [mGal]
+  gsstd: [1000.0, 1000.0, 1000.0]  # [ppm]
+  asstd: [1000.0, 1000.0, 1000.0]  # [ppm]
+  corrtime: 1.0                    # [hr]
+
+# GNSS天线杆臂 (IMU坐标系前右下方向)
+antlever: [ 0.136, -0.301, -0.184 ]
+
+# ============ 倾斜RTK专用配置 ============
+
+# 工作流程控制
+workflow:
+  # 零偏估计阶段：静止时长 [秒]
+  gyro_bias_est_time: 2.0
+
+  # 航向对准阶段：摆动对准时长 [秒]
+  heading_align_time: 3.0
+
+  # 航向对准有效性的GNSS轨迹长度阈值 [m]
+  # GNSS位置变化超过此阈值才认为轨迹有效
+  gnss_traj_length_threshold: 0.1
+
+  # 航向对准INS与RTK轨迹最小相关系数
+  min_traj_correlation: 0.8
+
+# ZUPT检测器配置
+zupt:
+  # IMU静止检测（加速度方差）
+  acc_threshold: 0.05          # [m/s²] — 静止时加速度方差阈值
+  acc_window: 10              # 滑动窗口大小 [样本数] (100Hz时为0.1秒)
+
+  # IMU静止检测（角速度阈值）
+  gyro_threshold: 0.1         # [deg/s] — 静止时角速度阈值
+  gyro_window: 10             # 滑动窗口大小 [样本数]
+
+  # GNSS静止检测
+  gnss_vel_threshold: 0.02   # [m/s] — GNSS速度阈值
+  gnss_window: 5             # 滑动窗口大小 [样本数]
+
+  # 双重条件同时满足才触发ZUPT
+  require_both_conditions: true
+
+  # ZUPT启用后的最小持续时间 [秒]
+  # 避免ZUPT频繁启停
+  min_zupt_duration: 0.5
+
+  # ZUPT量测噪声 [m/s]
+  # 值越小表示越信任ZUPT约束
+  measurement_noise: 0.01
+
+# 杆臂配置
+leverarm:
+  # IMU到杆尖的杆臂 (IMU坐标系前右下方向) [m]
+  # 即IMU中心到RTK杆尖触地点的距离
+  # 对于标准RTK测量杆，这是从IMU（通常在杆身中部）到杆尖的距离
+  imu_to_tip: [ 0.0, 0.0, 1.8 ]
+
+# 调试输出配置
+debug:
+  # 是否输出各阶段状态转换信息
+  output_state_transitions: true
+
+  # 是否输出ZUPT触发状态
+  output_zupt_status: true
+
+  # 是否输出航向对准结果
+  output_heading_align: true

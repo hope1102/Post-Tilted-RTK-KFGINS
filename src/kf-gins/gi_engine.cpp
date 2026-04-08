@@ -26,7 +26,7 @@
 #include "gi_engine.h"
 #include "insmech.h"
 
-GIEngine::GIEngine(GINSOptions &options) {
+GIEngine::GIEngine(const GINSOptions& options) {
 
     this->options_ = options;
     options_.print_options();

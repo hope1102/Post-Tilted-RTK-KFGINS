@@ -25,7 +25,21 @@ file(GLOB_RECURSE SOURCE
         src/kf-gins/insmech.cpp)
 
 include_directories(${PROJECT_SOURCE_DIR}/src)
+
+# KF-GINS 可执行文件
 add_executable(${PROJECT_NAME} ${SOURCE})
+
+# Tilt-RTK 可执行文件
+file(GLOB_RECURSE TILT_SOURCE
+        src/tilt_rtk_main.cpp
+        src/tilt_rtk/*.h
+        src/fileio/fileloader.cc
+        src/fileio/filesaver.cc
+        src/fileio/imunmealoader.cc
+        src/fileio/gnssnmealoader.cc
+        src/kf-gins/gi_engine.cpp
+        src/kf-gins/insmech.cpp)
+add_executable(Tilt-RTK ${TILT_SOURCE})
 
 # Eigen3
 include_directories(ThirdParty/eigen-3.3.9)
@@ -33,11 +47,16 @@ include_directories(ThirdParty/eigen-3.3.9)
 # yaml-cpp-0.7.0
 add_subdirectory(ThirdParty/yaml-cpp-0.7.0)
 target_link_libraries(${PROJECT_NAME} yaml-cpp)
+target_link_libraries(Tilt-RTK yaml-cpp)
 
 # abseil
 set(ABSL_PROPAGATE_CXX_STD true)
 add_subdirectory(ThirdParty/abseil-cpp-20220623.1)
 target_link_libraries(${PROJECT_NAME}
+        absl::strings
+        absl::str_format
+        absl::time)
+target_link_libraries(Tilt-RTK
         absl::strings
         absl::str_format
         absl::time)
